@@ -81,17 +81,19 @@ async def forward_single_message(client, msg_id):
     """Forward single message"""
     try:
         await client.forward_messages(
-            entity=DEST_CHANNEL,
-            message_ids=msg_id,
+            to_peer=DEST_CHANNEL,
+            messages=msg_id,
             from_peer=SOURCE_CHANNEL
         )
         return True
     except FloodWaitError as e:
         logger.warning(f"⚠️  FloodWait: {e.seconds}s")
-        await asyncio.sleep(e.seconds)
+        await asyncio.sleep(min(e.seconds, 5))
         return await forward_single_message(client, msg_id)
     except Exception as e:
-        logger.warning(f"✗ Failed msg {msg_id}: {str(e)[:50]}")
+        error_str = str(e)[:50]
+        if "CHANNEL_PRIVATE" in error_str or "CHAT_FORBIDDEN" in error_str:
+            logger.warning(f"✗ Access denied msg {msg_id}")
         return False
 
 
@@ -122,11 +124,11 @@ async def get_all_media(client):
 
 
 async def forward_batch(client, messages, progress_manager):
-    """Forward with 50 concurrent messages"""
+    """Forward with consistent speed - 20 concurrent"""
     total_sent = 0
     failed = 0
     
-    batch_size = 50
+    batch_size = 20  # Reduced from 50 for stability
     
     for i in range(0, len(messages), batch_size):
         batch = messages[i:i + batch_size]
@@ -153,8 +155,8 @@ async def forward_batch(client, messages, progress_manager):
         if total_sent % 100 == 0 or i + batch_size >= len(messages):
             logger.warning(f"⚡ {total_sent}/{len(messages)} sent | Failed: {failed}")
         
-        # Small delay between batches
-        await asyncio.sleep(0.05)
+        # Consistent delay between batches (1 second for stability)
+        await asyncio.sleep(1)
     
     return total_sent, failed
 
