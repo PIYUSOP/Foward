@@ -1,225 +1,148 @@
 import asyncio
-import logging
-from telethon import TelegramClient
-from telethon.sessions import StringSession
-from telethon.errors import FloodWaitError
 import json
 import os
-from datetime import datetime
+import random
 
-# Telethon Config - UPDATED WITH YOUR DETAILS
+from telethon import TelegramClient, events
+from telethon.sessions import StringSession
+from telethon.errors import FloodWaitError
+
 API_ID = 6435225
 API_HASH = "4e984ea35f854762dcde906dce426c2d"
-SESSION_STRING = "1BVtsOHYBu12OeJMPmYgDLs9EmjFEeUsVl0bFfvhMf6jBUW3byuAn13rTfHa0QJNZ8WheeAAnvcVefV7yb_va322GPxIgZpkWU6LUpwQfkSdn_A_GUygASZcV2mUeq1UEpvZjp1jieXzQ9Pd9j9tJ554e8fdIwZc6EfTUgXGtjRTiJnvFNTlvRuWiS2s5JsrksEn8Tjjf2uZOzmDK6I7LzPhEjdQxKTbf8_4FWGCryZXGXOVlVhVgLrNCMGfFgbDZr4dwHeDeq7jXeMLaFLK8V64NSnVIkj6yjYT_iphaH4zRz4KEKNMx-WNToONUWuZeyHPM2PD2pCstrCSz70MQ-BbeEt44-k8="
 
-# YOUR CHANNELS
+SESSION_STRING = "1BVtsOHYBu2FTJFeLoZQFC-V2rIkL80iFlw8C3YEdEOBwGeyWq_zMxY-XYJvj65vzCmq-H17QfVN8A5DqJTuwvciS5r11EPyaACVBJTF10s1T5raSSEkR9GpYWMmZO6QoKA1-SM9bnB5aCfQbpJDFgAPgyhxk2e_IrSkrPx2PmR7azTgG9bIngRiBTYq7rEm21MNqMWfeUjgC5t8u4YDRvi9NQbZQCeM96qm3sKZd1g71351J2jRd_xXyEhEmVpF92Cqalr6bkH1tqAl7fgKXtgzXqkZkxGPfyB1yPX-WIyLzOCJsAH2ejX1bxF9nPdscHHuD76tq-p6ANSdTZ1guCctdc1cdE0k="
+
 SOURCE_CHANNEL = -1002500303855
-DEST_CHANNEL = -1003724991437
+DEST_CHANNEL   = -1003724991437
 
-PROGRESS_FILE = "telethon_progress.json"
+PROGRESS_FILE = "forward.json"
 
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s | %(levelname)s | %(message)s"
+DELAY_MIN = 0.05
+DELAY_MAX = 0.08
+
+client = TelegramClient(
+    StringSession(SESSION_STRING),
+    API_ID,
+    API_HASH
 )
 
-logger = logging.getLogger("Telethon")
+def load_progress():
 
+    if os.path.exists(PROGRESS_FILE):
 
-class Progress:
-    def __init__(self, progress_file=PROGRESS_FILE):
-        self.progress_file = progress_file
-        self.data = self.load()
+        with open(PROGRESS_FILE) as f:
+            return json.load(f)
 
-    def load(self):
-        try:
-            if os.path.exists(self.progress_file):
-                with open(self.progress_file, "r") as f:
-                    return json.load(f)
-        except Exception as e:
-            logger.error(f"Error loading: {e}")
-        return {"last_id": None, "total": 0, "updated": None}
+    return {
+        "last_id": 0,
+        "total": 0
+    }
 
-    def save(self, last_id=None, total=None):
-        try:
-            if last_id is not None:
-                self.data["last_id"] = last_id
-            if total is not None:
-                self.data["total"] = total
-            self.data["updated"] = datetime.now().isoformat()
-            with open(self.progress_file, "w") as f:
-                json.dump(self.data, f, indent=2)
-        except Exception as e:
-            logger.error(f"Error saving: {e}")
+def save_progress(last_id, total):
 
-    def get(self):
-        return self.data
+    with open(PROGRESS_FILE,"w") as f:
 
-
-def is_media(msg):
-    """Check if message has video or photo"""
-    if not msg.media:
-        return False
-    
-    if msg.photo:
-        return True
-    
-    if msg.video:
-        return True
-    
-    if msg.document and msg.document.mime_type and "video" in msg.document.mime_type:
-        return True
-    
-    return False
-
-
-async def forward_msg(client, msg_id, retry=0):
-    """Forward single message"""
-    try:
-        await client.forward_messages(
-            to_peer=DEST_CHANNEL,
-            messages=msg_id,
-            from_peer=SOURCE_CHANNEL
+        json.dump(
+            {
+                "last_id": last_id,
+                "total": total
+            },
+            f,
+            indent=2
         )
-        return True
-    except FloodWaitError as e:
-        logger.warning(f"⚠️  FloodWait {e.seconds}s")
-        await asyncio.sleep(min(e.seconds, 10))
-        if retry < 1:
-            return await forward_msg(client, msg_id, retry + 1)
-        return False
-    except Exception as e:
-        return False
 
+progress = load_progress()
 
-async def get_media(client):
-    """Fetch only media messages"""
-    msgs = []
-    count = 0
-    
-    logger.warning("📥 Fetching media...")
-    
-    try:
-        async for msg in client.iter_messages(SOURCE_CHANNEL, limit=None):
-            if is_media(msg) and msg.id:
-                msgs.append(msg)
-                count += 1
-            
-            if count % 500 == 0:
-                logger.warning(f"↓ Found {len(msgs)}")
-        
-        msgs.reverse()
-        logger.warning(f"✓ Total media: {len(msgs)}")
-        return msgs
-    except Exception as e:
-        logger.error(f"Error fetching: {e}")
-        return []
+async def fast_delay():
 
+    t = random.uniform(DELAY_MIN, DELAY_MAX)
 
-async def forward_batch(client, msgs, prog):
-    """Forward with 15 concurrent"""
-    sent = 0
-    failed = 0
-    batch_size = 15
-    
-    for i in range(0, len(msgs), batch_size):
-        batch = msgs[i:i + batch_size]
-        tasks = [forward_msg(client, m.id) for m in batch]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        batch_sent = sum(1 for r in results if r is True)
-        batch_failed = len(batch) - batch_sent
-        
-        sent += batch_sent
-        failed += batch_failed
-        
-        if batch:
-            prog.save(batch[-1].id, sent)
-        
-        if sent % 50 == 0 or i + batch_size >= len(msgs):
-            logger.warning(f"⚡ {sent}/{len(msgs)} | Failed: {failed}")
-        
-        await asyncio.sleep(1.5)
-    
-    return sent, failed
+    await asyncio.sleep(t)
 
+# copy message without forward tag
+async def safe_copy(msg):
+
+    while True:
+
+        try:
+
+            await msg.copy_to(DEST_CHANNEL)
+
+            return True
+
+        except FloodWaitError as e:
+
+            print(f"FloodWait {e.seconds} sec")
+
+            await asyncio.sleep(e.seconds + 2)
+
+        except Exception as e:
+
+            print("Error:", e)
+
+            await asyncio.sleep(3)
+
+async def forward_old():
+
+    print("No-quote forwarding started...")
+
+    async for msg in client.iter_messages(
+        SOURCE_CHANNEL,
+        reverse=True,
+        min_id=progress["last_id"]
+    ):
+
+        ok = await safe_copy(msg)
+
+        if ok:
+
+            progress["last_id"] = msg.id
+
+            progress["total"] += 1
+
+            save_progress(
+                progress["last_id"],
+                progress["total"]
+            )
+
+            print("Sent:", progress["total"])
+
+            await fast_delay()
+
+@client.on(events.NewMessage(chats=SOURCE_CHANNEL))
+async def new_handler(event):
+
+    msg = event.message
+
+    ok = await safe_copy(msg)
+
+    if ok:
+
+        progress["last_id"] = msg.id
+
+        progress["total"] += 1
+
+        save_progress(
+            progress["last_id"],
+            progress["total"]
+        )
+
+        print("New:", msg.id)
+
+        await fast_delay()
 
 async def main():
-    client = TelegramClient(
-        session=StringSession(SESSION_STRING),
-        api_id=API_ID,
-        api_hash=API_HASH
-    )
-    
-    try:
-        await client.connect()
-        
-        logger.warning("🔥 TELETHON FORWARDER")
-        logger.warning(f"Source: {SOURCE_CHANNEL}")
-        logger.warning(f"Dest: {DEST_CHANNEL}")
-        
-        if not await client.is_user_authorized():
-            logger.error("❌ Not authorized!")
-            return
-        
-        logger.warning("✓ Authenticated!")
-        
-        prog = Progress()
-        data = prog.get()
-        start_from = data.get("last_id")
-        
-        msgs = await get_media(client)
-        
-        if not msgs:
-            logger.error("❌ No media")
-            return
-        
-        if start_from:
-            msgs_forward = [m for m in msgs if m.id > start_from]
-            logger.warning(f"Resume from {start_from}")
-        else:
-            msgs_forward = msgs
-        
-        if not msgs_forward:
-            logger.warning("✓ All done!")
-            return
-        
-        logger.warning(f"Found {len(msgs_forward)} to forward")
-        logger.warning("🚀 Starting...")
-        
-        start = datetime.now()
-        total_sent, total_failed = await forward_batch(client, msgs_forward, prog)
-        end = datetime.now()
-        
-        duration = (end - start).total_seconds()
-        speed = total_sent / duration if duration > 0 else 0
-        success = (total_sent / (total_sent + total_failed) * 100) if (total_sent + total_failed) > 0 else 0
-        
-        logger.warning(f"""
-╔════════════════════════════════════════╗
-║        DONE                            ║
-╠════════════════════════════════════════╣
-║  ✓ Sent: {total_sent:,}
-║  ✗ Failed: {total_failed:,}
-║  ⏱️  Time: {duration:.1f}s
-║  ⚡ Speed: {speed:.1f}/sec
-║  📊 Success: {success:.1f}%
-╚════════════════════════════════════════╝
-        """)
-        
-        if msgs_forward:
-            prog.save(msgs_forward[-1].id, data["total"] + total_sent)
-    
-    except Exception as e:
-        logger.error(f"❌ Error: {e}")
-    finally:
-        await client.disconnect()
 
+    print("Starting no-quote forwarder...")
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Stopped")
-    except Exception as e:
-        logger.error(f"Error: {e}")
+    await client.start()
+
+    print("Logged in")
+
+    await forward_old()
+
+    print("Listening new messages...")
+
+    await client.run_until_disconnected()
+
+asyncio.run(main())
