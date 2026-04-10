@@ -15,7 +15,7 @@ SESSION_STRING = "1BVtsOHYBu2FTJFeLoZQFC-V2rIkL80iFlw8C3YEdEOBwGeyWq_zMxY-XYJvj6
 SOURCE_CHANNEL = -1002500303855
 DEST_CHANNEL   = -1003724991437
 
-PROGRESS_FILE = "forward.json"
+PROGRESS_FILE = "progress.json"
 
 DELAY_MIN = 0.05
 DELAY_MAX = 0.08
@@ -33,66 +33,91 @@ def load_progress():
         with open(PROGRESS_FILE) as f:
             return json.load(f)
 
-    return {
-        "last_id": 0,
-        "total": 0
-    }
+    return {"last_id": 0, "total": 0}
 
-def save_progress(last_id, total):
+def save_progress():
 
     with open(PROGRESS_FILE,"w") as f:
 
-        json.dump(
-            {
-                "last_id": last_id,
-                "total": total
-            },
-            f,
-            indent=2
-        )
+        json.dump(progress,f,indent=2)
 
 progress = load_progress()
 
-async def fast_delay():
+async def wait_delay():
 
-    t = random.uniform(DELAY_MIN, DELAY_MAX)
+    await asyncio.sleep(
 
-    await asyncio.sleep(t)
+        random.uniform(DELAY_MIN, DELAY_MAX)
 
-# copy message without forward tag
-async def safe_copy(msg):
+    )
+
+async def resend(msg):
 
     while True:
 
         try:
 
-            await msg.copy_to(DEST_CHANNEL)
+            if msg.text:
+
+                await client.send_message(
+
+                    DEST_CHANNEL,
+
+                    msg.text
+
+                )
+
+            elif msg.media:
+
+                path = await msg.download_media()
+
+                await client.send_file(
+
+                    DEST_CHANNEL,
+
+                    path,
+
+                    caption=msg.text or ""
+
+                )
+
+                if path and os.path.exists(path):
+
+                    os.remove(path)
+
+            else:
+
+                return False
 
             return True
 
         except FloodWaitError as e:
 
-            print(f"FloodWait {e.seconds} sec")
+            print("FloodWait", e.seconds)
 
-            await asyncio.sleep(e.seconds + 2)
+            await asyncio.sleep(e.seconds)
 
         except Exception as e:
 
-            print("Error:", e)
+            print("skip", e)
 
-            await asyncio.sleep(3)
+            return False
 
 async def forward_old():
 
-    print("No-quote forwarding started...")
+    print("sending old messages")
 
     async for msg in client.iter_messages(
+
         SOURCE_CHANNEL,
+
         reverse=True,
+
         min_id=progress["last_id"]
+
     ):
 
-        ok = await safe_copy(msg)
+        ok = await resend(msg)
 
         if ok:
 
@@ -100,21 +125,18 @@ async def forward_old():
 
             progress["total"] += 1
 
-            save_progress(
-                progress["last_id"],
-                progress["total"]
-            )
+            save_progress()
 
-            print("Sent:", progress["total"])
+            print("sent", progress["total"])
 
-            await fast_delay()
+            await wait_delay()
 
 @client.on(events.NewMessage(chats=SOURCE_CHANNEL))
-async def new_handler(event):
+async def new_msg(e):
 
-    msg = event.message
+    msg = e.message
 
-    ok = await safe_copy(msg)
+    ok = await resend(msg)
 
     if ok:
 
@@ -122,26 +144,21 @@ async def new_handler(event):
 
         progress["total"] += 1
 
-        save_progress(
-            progress["last_id"],
-            progress["total"]
-        )
+        save_progress()
 
-        print("New:", msg.id)
+        print("new", msg.id)
 
-        await fast_delay()
+        await wait_delay()
 
 async def main():
 
-    print("Starting no-quote forwarder...")
+    print("starting")
 
     await client.start()
 
-    print("Logged in")
-
     await forward_old()
 
-    print("Listening new messages...")
+    print("waiting new messages")
 
     await client.run_until_disconnected()
 
